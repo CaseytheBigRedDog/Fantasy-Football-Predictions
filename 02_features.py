@@ -104,6 +104,52 @@ stats = stats.merge(game_context, on=["season", "week", "recent_team"], how="lef
 # double check sign empirically below in the sanity check script.
 
 # ---------------------------------------------------------------
+# 3b. Snap counts / snap share (from PFR via nflverse)
+# ---------------------------------------------------------------
+import glob
+
+snap_files = sorted(glob.glob("snap_data/snap_counts_*.csv"))
+snaps = pd.concat([pd.read_csv(f) for f in snap_files], ignore_index=True)
+snaps = snaps[snaps["game_type"] == "REG"]
+
+# Crosswalk PFR player id -> GSIS player id (the id player_stats.csv uses)
+crosswalk = pd.read_csv("players_master.csv", usecols=["gsis_id", "pfr_id"])
+crosswalk = crosswalk.dropna(subset=["gsis_id", "pfr_id"])
+
+snaps = snaps.merge(
+    crosswalk, left_on="pfr_player_id", right_on="pfr_id", how="left"
+)
+snaps = snaps.rename(columns={"gsis_id": "player_id"})
+snaps = snaps.dropna(subset=["player_id"])
+
+snaps = snaps[["player_id", "season", "week", "offense_snaps", "offense_pct"]].drop_duplicates(
+    subset=["player_id", "season", "week"]
+)
+
+stats = stats.merge(snaps, on=["player_id", "season", "week"], how="left")
+
+# Rolling snap share -- this is one of the stickiest, most predictive signals
+# for role/opportunity, especially for detecting a player's role INCREASING
+# (e.g. earning more snaps after a teammate injury) before points catch up.
+stats = stats.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
+grp2 = stats.groupby("player_id")
+for window in [3, 5]:
+    stats[f"offense_pct_r{window}"] = (
+        grp2["offense_pct"].shift(1).rolling(window, min_periods=1).mean()
+    )
+    stats[f"offense_snaps_r{window}"] = (
+        grp2["offense_snaps"].shift(1).rolling(window, min_periods=1).mean()
+    )
+
+# Snap share trend: this week's rolling-3 minus rolling-5 -- a positive value
+# means the player's role has been GROWING recently, a leading indicator
+# rolling fantasy points alone won't catch as fast.
+stats["offense_pct_trend"] = stats["offense_pct_r3"] - stats["offense_pct_r5"]
+
+snap_match_rate = stats["offense_pct"].notna().mean()
+print(f"Snap count match rate: {snap_match_rate:.1%}")
+
+# ---------------------------------------------------------------
 # 4. Target: raw fantasy points (standard scoring uses 'fantasy_points';
 #    PPR uses 'fantasy_points_ppr'. We'll predict PPR since it's the most
 #    common league format -- swap the column if the user plays standard.)
@@ -114,6 +160,12 @@ stats["target_fp"] = stats["fantasy_points_ppr"]
 # model can't do much with zero prior information anyway, and this is a small
 # fraction of rows.
 model_df = stats.dropna(subset=["fantasy_points_ppr_r3"]).copy()
+
+# A small remaining sliver of rows (unmatched player IDs in the PFR<->GSIS
+# crosswalk) will still have null snap features even in the 2013+ window --
+# fill those specifically, not as a blanket early-era patch.
+snap_feat_cols = [c for c in model_df.columns if "offense_pct" in c or "offense_snaps" in c]
+model_df[snap_feat_cols] = model_df[snap_feat_cols].fillna(0)
 
 print(f"Feature-engineered rows: {len(model_df):,}")
 print(f"Columns: {model_df.shape[1]}")
