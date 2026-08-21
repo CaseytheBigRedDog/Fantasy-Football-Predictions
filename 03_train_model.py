@@ -42,7 +42,7 @@ X_train, y_train = X[train_mask], y[train_mask]
 X_val, y_val = X[val_mask], y[val_mask]
 X_test, y_test = X[test_mask], y[test_mask]
 
-print(f"Train: {len(X_train):,} rows (2010-2022)")
+print(f"Train: {len(X_train):,} rows (2013-2022)")
 print(f"Val:   {len(X_val):,} rows (2023)")
 print(f"Test:  {len(X_test):,} rows (2024)")
 
