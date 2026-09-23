@@ -96,7 +96,7 @@ for pos in POSITIONS:
         continue
     models = [fit_quantile_model(tr[feature_cols].fillna(0), tr["target_fp"], q) for q in QUANTILES]
     rng = predict_range(models, fut[feature_cols].fillna(0))
-    frame = fut[["player_display_name", "position", "recent_team", "opponent_team",
+    frame = fut[["player_id", "player_display_name", "position", "recent_team", "opponent_team",
                  "is_home", "spread_line", "total_line", "games_played_prior"]].copy()
     frame["floor"], frame["median"], frame["ceiling"] = rng[:, 0], rng[:, 1], rng[:, 2]
     out_frames.append(frame)
