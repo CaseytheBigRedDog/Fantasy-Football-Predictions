@@ -26,6 +26,11 @@ import sys
 import numpy as np
 import pandas as pd
 
+# How far to move FantasyPros' week labels. 0 = use the labels as 04_fantasypros_comparison.py
+# does. Run check_fp_alignment.py; if it says a shift is needed, set it here (e.g. -1).
+FP_WEEK_OFFSET = -1
+FP_MIN_PLAYERS = 15   # skip a position if fewer players than this match
+
 stats = pd.read_parquet("stats_clean.parquet")
 games = pd.read_parquet("games_clean.parquet")
 
@@ -182,6 +187,76 @@ show_misses("\nBiggest busts (fell below the floor by the most):",
             scored[scored["under_floor"] > 0].sort_values("under_floor", ascending=False))
 
 # ---------------------------------------------------------------
+# 5b. Compare with FantasyPros expert rankings (when the archive has that week)
+# ---------------------------------------------------------------
+def normalize_name(s):
+    return (
+        s.lower().replace(".", "").replace("'", "").replace(" jr", "")
+        .replace(" sr", "").replace(" ii", "").replace(" iii", "")
+        .replace(" iv", "").strip()
+    )
+
+
+def fantasypros_for_week(season, week):
+    """FantasyPros rankings for one week, or (None, reason) if not available."""
+    if not os.path.exists("fp_weekly_rankings.parquet"):
+        return None, "fp_weekly_rankings.parquet not found"
+    fp = pd.read_parquet("fp_weekly_rankings.parquet")
+    fp = fp[["scrape_date", "position", "ecr", "mergename"]].sort_values("scrape_date")
+
+    g = games.copy()
+    g["gameday"] = pd.to_datetime(g["gameday"])
+    week_starts = (
+        g.groupby(["season", "week"])["gameday"].min()
+        .reset_index().rename(columns={"gameday": "week_start"})
+        .sort_values("week_start")
+    )
+    mapped = pd.merge_asof(
+        fp, week_starts, left_on="scrape_date", right_on="week_start",
+        direction="forward", tolerance=pd.Timedelta("6 days"),
+    ).dropna(subset=["season", "week"])
+    mapped["season"] = mapped["season"].astype(int)
+    mapped["week"] = mapped["week"].astype(int) + FP_WEEK_OFFSET
+
+    sel = mapped[(mapped["season"] == season) & (mapped["week"] == week)]
+    if sel.empty:
+        latest = fp["scrape_date"].max()
+        return None, (f"the FantasyPros archive has no rankings for {season} week {week} "
+                      f"yet (its latest scrape is {pd.Timestamp(latest).date()}). "
+                      f"It updates weekly, so try again after the next refresh.")
+    sel = sel[sel["scrape_date"] == sel["scrape_date"].max()].copy()
+    sel["mergename"] = sel["mergename"].apply(lambda x: normalize_name(str(x)))
+    return sel[["mergename", "position", "ecr"]].drop_duplicates(["mergename", "position"]), None
+
+
+print("\nFantasyPros comparison")
+fp_rows = {}
+fpr, why = fantasypros_for_week(season, week)
+if fpr is None:
+    print(f"  Skipped: {why}")
+else:
+    scored["mergename"] = scored["player"].apply(normalize_name)
+    both = scored.merge(fpr, on=["mergename", "position"], how="inner")
+    print(f"  Matched {len(both)} of {len(scored)} scored players to FantasyPros rankings.")
+    print(f"  Ranking correlation with actual results, same players for both "
+          f"(higher is better):")
+    print(f"  {'Pos':<4} {'N':>5} {'Our model':>10} {'FantasyPros':>12}")
+    for pos in ["QB", "RB", "WR", "TE"]:
+        sub = both[both["position"] == pos]
+        if len(sub) < FP_MIN_PLAYERS:
+            continue
+        our_rho = sub["median"].corr(sub["actual"], method="spearman")
+        fp_rho = (-sub["ecr"]).corr(sub["actual"], method="spearman")
+        fp_rows[pos] = {"fp_n": len(sub), "our_rho_matched": round(our_rho, 3), "fp_rho": round(fp_rho, 3)}
+        print(f"  {pos:<4} {len(sub):>5} {our_rho:>10.3f} {fp_rho:>12.3f}")
+    if not fp_rows:
+        print(f"  (fewer than {FP_MIN_PLAYERS} matched players at every position)")
+    else:
+        print("  Fairness note: FantasyPros rankings are scraped later in the week and "
+              "reflect injury news our model doesn't have,\n  so expect FantasyPros to look "
+              "better in weeks with many late injuries.")
+
+# ---------------------------------------------------------------
 # 6. Save results and update the running log
 # ---------------------------------------------------------------
 out_cols = ["player", "position", "team", "opponent", "floor", "median", "ceiling",
@@ -190,7 +265,7 @@ out = preds[[c for c in out_cols if c in preds.columns]].copy()
 out["error"] = (out["actual"] - out["median"]).round(2)
 out.round(2).to_csv(f"scored_{season}_week{week}.csv", index=False)
 
-new_log = pd.DataFrame([{"season": season, "week": week, "position": pos, **r}
+new_log = pd.DataFrame([{"season": season, "week": week, "position": pos, **r, **fp_rows.get(pos, {})}
                         for pos, r in rows.items()]).round(3)
 log_path = "accuracy_log.csv"
 if os.path.exists(log_path):

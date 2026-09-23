@@ -4,7 +4,7 @@ Step 4: Compare our model against FantasyPros expert consensus rankings (ECR).
 Data source: dynastyprocess.com/data, which mirrors FantasyPros' public
 rankings pages on a scheduled scrape (this is the same data source the
 ffverse R packages use -- see https://github.com/dynastyprocess/data).
-Coverage: weekly PPR positional rankings, 2019-2025.
+Coverage: weekly PPR positional rankings, 2023-present.
 
 IMPORTANT SCOPE NOTE: this script compares against FantasyPros' expert
 CONSENSUS RANKINGS (a rank ordering: "who's the better play"), not raw
@@ -41,6 +41,13 @@ fp_mapped = pd.merge_asof(
 fp_mapped = fp_mapped.dropna(subset=["season", "week"])
 fp_mapped["season"] = fp_mapped["season"].astype(int)
 fp_mapped["week"] = fp_mapped["week"].astype(int)
+
+# The scrapes happen on Fridays, AFTER that week's Thursday game, so the
+# 'next week' label above is one week late. check_fp_alignment.py measured
+# this: shifting back one week lines the rankings up with the right games.
+FP_WEEK_OFFSET = -1
+fp_mapped["week"] = fp_mapped["week"] + FP_WEEK_OFFSET
+fp_mapped = fp_mapped[fp_mapped["week"] >= 1]
 
 # Within each (season, week, position), rank FP's ecr ascending (1 = best)
 fp_mapped["fp_rank"] = fp_mapped.groupby(["season", "week", "position"])["ecr"].rank(method="first")
