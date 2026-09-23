@@ -10,6 +10,8 @@ Changes in this version:
   * Rolling / season-to-date features are now computed PER PLAYER. The old
     version rolled across the whole table, so a player's first few games
     picked up the previous player's stats.
+  * Adds recency-weighted (_ewm), current-season (_szn) and role-change features.
+    They are NOT used by the models until adopt_new_features.py switches them on.
   * Builds "upcoming week" rows (one per likely player on a team that has an
     unplayed game) using the exact same feature code as the training rows,
     and saves them to upcoming_data.parquet for predict_week.py.
@@ -105,6 +107,40 @@ for col in roll_cols:
 # Games of history available -- lets the model learn to trust rookies' rolling
 # stats less (small sample) vs. veterans
 stats["games_played_prior"] = grp.cumcount()
+
+# ---------------------------------------------------------------
+# 1b. Recency-weighted and current-season features
+# ---------------------------------------------------------------
+# The 3- and 5-game windows can lag when a player's role changes (they still
+# contain games from before the change), and the career average lags even more.
+# These react faster:
+#   *_ewm  recency-weighted average (each older game counts about 75% as much as
+#          the one after it; half-life of 2 games)
+#   *_szn  average over THIS season's games only (falls back to the last-5
+#          average in a player's first game of a season)
+ewm_cols = [c for c in ["fantasy_points_ppr", "targets", "receptions", "receiving_yards",
+                        "carries", "rushing_yards", "attempts", "passing_yards",
+                        "target_share", "air_yards_share", "wopr"] if c in stats.columns]
+for col in ewm_cols:
+    shifted = grp[col].shift(1)
+    stats[f"{col}_ewm"] = (
+        shifted.groupby(pid).ewm(halflife=2, min_periods=1, ignore_na=True).mean()
+        .reset_index(level=0, drop=True)
+    )
+
+season_keys = [stats["player_id"], stats["season"]]
+grp_season = stats.groupby(["player_id", "season"])
+szn_cols = [c for c in ["fantasy_points_ppr", "targets", "receptions", "receiving_yards",
+                        "carries", "target_share", "air_yards_share", "wopr"] if c in stats.columns]
+for col in szn_cols:
+    shifted = grp_season[col].shift(1)
+    szn = shifted.groupby(season_keys).expanding().mean().reset_index(level=[0, 1], drop=True)
+    stats[f"{col}_szn"] = szn.fillna(stats[f"{col}_r5"])
+stats["season_games_prior"] = grp_season.cumcount()
+
+# How far recent form has moved from the career norm (a role-change signal)
+stats["target_share_change"] = stats["target_share_r3"] - stats["target_share_seasontd"]
+stats["pts_vs_career"] = stats["fantasy_points_ppr_r5"] - stats["fantasy_points_ppr_seasontd"]
 
 # ---------------------------------------------------------------
 # 2. Opponent defense strength (fantasy points allowed to this position,
@@ -204,6 +240,11 @@ for window in [3, 5]:
         grp2["offense_snaps"].shift(1).groupby(pid2).rolling(window, min_periods=1).mean()
         .reset_index(level=0, drop=True)
     )
+
+stats["offense_pct_ewm"] = (
+    grp2["offense_pct"].shift(1).groupby(pid2).ewm(halflife=2, min_periods=1, ignore_na=True).mean()
+    .reset_index(level=0, drop=True)
+)
 
 # Snap share trend: this week's rolling-3 minus rolling-5 -- a positive value
 # means the player's role has been GROWING recently, a leading indicator

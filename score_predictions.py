@@ -28,7 +28,7 @@ import pandas as pd
 
 # How far to move FantasyPros' week labels. 0 = use the labels as 04_fantasypros_comparison.py
 # does. Run check_fp_alignment.py; if it says a shift is needed, set it here (e.g. -1).
-FP_WEEK_OFFSET = -1
+FP_WEEK_OFFSET = 0
 FP_MIN_PLAYERS = 15   # skip a position if fewer players than this match
 
 stats = pd.read_parquet("stats_clean.parquet")
@@ -120,7 +120,7 @@ if scored.empty:
 # ---------------------------------------------------------------
 def summarize(df):
     err = df["actual"] - df["median"]
-    return {
+    out = {
         "n": len(df),
         "model_mae": err.abs().mean(),
         "naive_mae": (df["actual"] - df["naive"]).abs().mean(),
@@ -129,6 +129,11 @@ def summarize(df):
         "below": (df["actual"] < df["floor"]).mean(),
         "rank_corr": df["median"].corr(df["actual"], method="spearman"),
     }
+    if "expected" in df.columns and df["expected"].notna().all():
+        e = df["actual"] - df["expected"]
+        out["exp_mae"] = e.abs().mean()
+        out["exp_bias"] = e.mean()
+    return out
 
 
 rows = {pos: summarize(scored[scored["position"] == pos])
@@ -141,6 +146,13 @@ for pos, r in rows.items():
     rho = "n/a" if pd.isna(r["rank_corr"]) else f"{r['rank_corr']:.3f}"
     print(f"{pos:<4} {r['n']:>5} {r['model_mae']:>10.2f} {r['naive_mae']:>10.2f} "
           f"{r['in_range']:>9.1%} {r['above']:>7.1%} {r['below']:>7.1%} {rho:>10}")
+
+if "exp_mae" in rows["ALL"]:
+    print("\nExpected-points column (the average outcome, comparable to ESPN-style projections)")
+    print(f"{'Pos':<4} {'Exp MAE':>9} {'Exp bias':>9}")
+    for pos, r in rows.items():
+        print(f"{pos:<4} {r['exp_mae']:>9.2f} {r['exp_bias']:>+9.2f}")
+    print("Bias = actual minus expected; near 0 is best.")
 
 overall = rows["ALL"]
 verdict = "beat" if overall["model_mae"] < overall["naive_mae"] else "did not beat"

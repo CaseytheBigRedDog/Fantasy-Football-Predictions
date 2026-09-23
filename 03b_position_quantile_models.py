@@ -21,6 +21,8 @@ feature_cols += [
     "games_played_prior", "team_implied_total", "spread_line", "total_line",
     "is_home", "rest_days", "def_pts_allowed_r5",
 ]
+from new_features import extra_feature_cols
+feature_cols += extra_feature_cols(df)
 feature_cols = list(dict.fromkeys(c for c in feature_cols if c in df.columns))
 
 X_all = df[feature_cols].fillna(0)
