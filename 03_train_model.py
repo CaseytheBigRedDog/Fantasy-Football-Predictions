@@ -1,7 +1,7 @@
 """
 Step 3: Train baseline models with time-series-correct validation.
 
-Validation strategy: train on 2010-2022, validate on 2023, test on 2024.
+Validation strategy: train on 2013-2023, validate on 2024, test on 2025.
 This mimics real deployment -- you'll always be predicting a future week
 you haven't seen, never a randomly held-out week from the middle of a
 season you partially trained on.
@@ -34,17 +34,17 @@ print(f"Using {len(feature_cols)} features")
 X = df[feature_cols].fillna(0)
 y = df["target_fp"]
 
-train_mask = df["season"] <= 2022
-val_mask = df["season"] == 2023
-test_mask = df["season"] == 2024
+train_mask = df["season"] <= 2023
+val_mask = df["season"] == 2024
+test_mask = df["season"] == 2025
 
 X_train, y_train = X[train_mask], y[train_mask]
 X_val, y_val = X[val_mask], y[val_mask]
 X_test, y_test = X[test_mask], y[test_mask]
 
-print(f"Train: {len(X_train):,} rows (2013-2022)")
-print(f"Val:   {len(X_val):,} rows (2023)")
-print(f"Test:  {len(X_test):,} rows (2024)")
+print(f"Train: {len(X_train):,} rows (2013-2023)")
+print(f"Val:   {len(X_val):,} rows (2024)")
+print(f"Test:  {len(X_test):,} rows (2025)")
 
 # ---------------------------------------------------------------
 # Baseline: "predict last-3-week average" -- the thing your model has to beat
@@ -52,7 +52,7 @@ print(f"Test:  {len(X_test):,} rows (2024)")
 naive_pred = df.loc[test_mask, "fantasy_points_ppr_r3"].fillna(df.loc[train_mask, "target_fp"].mean())
 naive_mae = mean_absolute_error(y_test, naive_pred)
 naive_rmse = np.sqrt(mean_squared_error(y_test, naive_pred))
-print(f"\n--- Naive baseline (3-week rolling avg) on 2024 test set ---")
+print(f"\n--- Naive baseline (3-week rolling avg) on 2025 test set ---")
 print(f"MAE:  {naive_mae:.3f}")
 print(f"RMSE: {naive_rmse:.3f}")
 
@@ -62,7 +62,7 @@ print(f"RMSE: {naive_rmse:.3f}")
 ridge = Ridge(alpha=10.0)
 ridge.fit(X_train, y_train)
 pred_ridge = ridge.predict(X_test)
-print(f"\n--- Ridge Regression on 2024 test set ---")
+print(f"\n--- Ridge Regression on 2025 test set ---")
 print(f"MAE:  {mean_absolute_error(y_test, pred_ridge):.3f}")
 print(f"RMSE: {np.sqrt(mean_squared_error(y_test, pred_ridge)):.3f}")
 print(f"R2:   {r2_score(y_test, pred_ridge):.3f}")
@@ -76,13 +76,13 @@ gbr = GradientBoostingRegressor(
 )
 gbr.fit(X_train, y_train)
 pred_gbr = gbr.predict(X_test)
-print(f"\n--- Gradient Boosting on 2024 test set ---")
+print(f"\n--- Gradient Boosting on 2025 test set ---")
 print(f"MAE:  {mean_absolute_error(y_test, pred_gbr):.3f}")
 print(f"RMSE: {np.sqrt(mean_squared_error(y_test, pred_gbr)):.3f}")
 print(f"R2:   {r2_score(y_test, pred_gbr):.3f}")
 
 # ---------------------------------------------------------------
-# Model 3: XGBoost, tuned lightly using the 2023 validation set
+# Model 3: XGBoost, tuned lightly using the 2024 validation set
 # ---------------------------------------------------------------
 xgb = XGBRegressor(
     n_estimators=400, max_depth=4, learning_rate=0.03,
@@ -91,7 +91,7 @@ xgb = XGBRegressor(
 )
 xgb.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
 pred_xgb = xgb.predict(X_test)
-print(f"\n--- XGBoost on 2024 test set ---")
+print(f"\n--- XGBoost on 2025 test set ---")
 print(f"MAE:  {mean_absolute_error(y_test, pred_xgb):.3f}")
 print(f"RMSE: {np.sqrt(mean_squared_error(y_test, pred_xgb)):.3f}")
 print(f"R2:   {r2_score(y_test, pred_xgb):.3f}")

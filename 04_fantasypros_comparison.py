@@ -48,7 +48,7 @@ fp_mapped["fp_rank"] = fp_mapped.groupby(["season", "week", "position"])["ecr"].
 # ---------------------------------------------------------------
 # Load our model's predictions and convert to within-position ranks too
 # ---------------------------------------------------------------
-ours = pd.read_parquet("test_predictions_v2.parquet")  # 2024 test set only
+ours = pd.read_parquet("test_predictions_v2.parquet")  # 2025 test set only
 ours["our_rank"] = ours.groupby(["season", "week", "position"])["pred_median"].rank(
     method="first", ascending=False  # higher predicted points = better rank
 )
@@ -74,7 +74,7 @@ merged = ours.merge(
     fp_mapped[["season", "week", "mergename", "fp_rank"]],
     on=["season", "week", "mergename"], how="inner",
 )
-print(f"Matched {len(merged):,} of {len(ours):,} of our 2024 test-set rows to FantasyPros rankings "
+print(f"Matched {len(merged):,} of {len(ours):,} of our 2025 test-set rows to FantasyPros rankings "
       f"({len(merged)/len(ours):.1%} match rate)")
 
 # ---------------------------------------------------------------

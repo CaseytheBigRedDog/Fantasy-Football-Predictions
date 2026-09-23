@@ -32,10 +32,8 @@ print(f"=== Refreshing data ({datetime.now().strftime('%Y-%m-%d %H:%M')}) ===\n"
 # 1. Core files: player stats, schedules/Vegas lines, player ID crosswalk
 # ---------------------------------------------------------------
 print("Downloading core files...")
-download(
-    "https://github.com/nflverse/nflverse-data/releases/download/player_stats/player_stats.csv",
-    "player_stats.csv",
-)
+from download_player_stats import download_player_stats
+download_player_stats(CURRENT_YEAR)
 download(
     "https://github.com/nflverse/nflverse-data/releases/download/schedules/games.csv",
     "games.csv",

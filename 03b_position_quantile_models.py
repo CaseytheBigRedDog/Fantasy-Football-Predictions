@@ -26,9 +26,9 @@ feature_cols = list(dict.fromkeys(c for c in feature_cols if c in df.columns))
 X_all = df[feature_cols].fillna(0)
 y_all = df["target_fp"]
 
-train_mask = df["season"] <= 2022
-val_mask = df["season"] == 2023
-test_mask = df["season"] == 2024
+train_mask = df["season"] <= 2023
+val_mask = df["season"] == 2024
+test_mask = df["season"] == 2025
 
 QUANTILES = [0.1, 0.5, 0.9]  # floor, median, ceiling
 
