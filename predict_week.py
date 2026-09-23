@@ -19,6 +19,12 @@ What it does:
   2. Final models: retrains on every finished game and predicts the upcoming week.
   3. Saves predictions_<season>_week<week>.csv and prints the top players.
 
+How the floor / median / ceiling are built is set by RANGE_METHOD in
+range_calibration.py ("quantile" = direct percentile models, "residual" = built
+around the expected model, "hybrid" = residual ranges for the top projections and
+direct models for the rest). The residual and hybrid methods take a few extra
+minutes because they re-create past seasons' out-of-sample projections.
+
 What it does NOT know: injuries, inactives, depth-chart news, or weather.
 A player who got hurt last week still gets a projection based on his form.
 Check injury reports before acting on any number.
@@ -29,10 +35,11 @@ import numpy as np
 import pandas as pd
 from xgboost import XGBRegressor
 
-from new_features import extra_feature_cols
+import range_calibration as rc
 
-POSITIONS = ["QB", "RB", "WR", "TE"]
-QUANTILES = [0.1, 0.5, 0.9]  # floor, median, ceiling
+POSITIONS = rc.POSITIONS
+QUANTILES = list(rc.QUANTILES)   # floor, median, ceiling
+method = rc.RANGE_METHOD
 
 train = pd.read_parquet("model_data.parquet")
 up = pd.read_parquet("upcoming_data.parquet")
@@ -45,30 +52,12 @@ if up.empty:
 season, week = int(up["season"].iloc[0]), int(up["week"].iloc[0])
 
 # Same features the position models in 03b_position_quantile_models.py use
-feature_cols = [c for c in train.columns if c.endswith(("_r3", "_r5", "_seasontd", "_trend"))]
-feature_cols += [
-    "games_played_prior", "team_implied_total", "spread_line", "total_line",
-    "is_home", "rest_days", "def_pts_allowed_r5",
-]
-feature_cols += extra_feature_cols(train)   # newer features, once adopt_new_features.py has enabled them
-feature_cols = list(dict.fromkeys(c for c in feature_cols if c in train.columns))
+feature_cols = rc.get_feature_cols(train)
 
 
 def fit_quantile_model(X, y, alpha):
     model = XGBRegressor(
         objective="reg:quantileerror", quantile_alpha=alpha,
-        n_estimators=250, learning_rate=0.04, max_depth=4,
-        subsample=0.8, colsample_bytree=0.8, min_child_weight=5,
-        random_state=42,
-    )
-    model.fit(X, y)
-    return model
-
-
-def fit_mean_model(X, y):
-    """Predicts the AVERAGE outcome (what most sites call a projection)."""
-    model = XGBRegressor(
-        objective="reg:squarederror",
         n_estimators=250, learning_rate=0.04, max_depth=4,
         subsample=0.8, colsample_bytree=0.8, min_child_weight=5,
         random_state=42,
@@ -87,25 +76,43 @@ def predict_range(models, X):
 # 1. Backtest on the last full season
 # ---------------------------------------------------------------
 holdout = int(train["season"].max()) - 1
+describe = {"quantile": "direct percentile models",
+            "residual": "built around the expected model",
+            "hybrid": "direct percentile models, residual ranges for the top projections"}
+print(f"Range method: {method} ({describe[method]})")
 print(f"Backtest: train on seasons before {holdout}, score on {holdout}\n")
+
+# Out-of-sample 'expected' values. The residual method needs several past seasons to learn
+# typical spreads; the quantile method only needs the backtest season itself.
+first = rc.FIRST_CALIBRATION_SEASON if method in ("residual", "hybrid") else holdout
+pool_all = rc.oos_expected(train, feature_cols, first, holdout)
+pool_cal = pool_all[pool_all["season"] < holdout]
+hold = pool_all[pool_all["season"] == holdout]
+
 print(f"{'Pos':<4} {'MAE(median)':>12} {'In 10-90 range':>15} {'MAE(expected)':>14} {'Bias(exp)':>10} {'Rows':>7}")
 all_err, all_exp_err, bt_rows = [], [], []
 for pos in POSITIONS:
-    tr = train[(train["position"] == pos) & (train["season"] < holdout)]
     te = train[(train["position"] == pos) & (train["season"] == holdout)]
-    if te.empty:
+    h = hold[hold["pos"] == pos]
+    if te.empty or len(h) != len(te):
         continue
-    models = [fit_quantile_model(tr[feature_cols].fillna(0), tr["target_fp"], q) for q in QUANTILES]
-    rng = predict_range(models, te[feature_cols].fillna(0))
-    err = (te["target_fp"].values - rng[:, 1])
-    inside = ((te["target_fp"].values >= rng[:, 0]) & (te["target_fp"].values <= rng[:, 2])).mean()
+    exp_pred = h["expected"].to_numpy()
+    if method == "residual":
+        rng = rc.residual_range(exp_pred, pos, pool_cal)
+    else:
+        tr = train[(train["position"] == pos) & (train["season"] < holdout)]
+        models = [fit_quantile_model(tr[feature_cols].fillna(0), tr["target_fp"], q) for q in QUANTILES]
+        rng = np.clip(predict_range(models, te[feature_cols].fillna(0)), 0, None)
+        if method == "hybrid":
+            rng = rc.hybrid_range(exp_pred, pos, pool_cal, rng)
+    actual = te["target_fp"].to_numpy()
+    err = actual - rng[:, 1]
+    inside = ((actual >= rng[:, 0]) & (actual <= rng[:, 2])).mean()
     all_err.extend(np.abs(err))
-    mean_model = fit_mean_model(tr[feature_cols].fillna(0), tr["target_fp"])
-    exp_pred = mean_model.predict(te[feature_cols].fillna(0))
-    exp_err = te["target_fp"].values - exp_pred
+    exp_err = actual - exp_pred
     all_exp_err.extend(exp_err)
     bt_rows.append(pd.DataFrame({
-        "pos": pos, "actual": te["target_fp"].values, "expected": exp_pred,
+        "pos": pos, "actual": actual, "expected": exp_pred,
         "floor": rng[:, 0], "median": rng[:, 1], "ceiling": rng[:, 2]}))
     print(f"{pos:<4} {np.abs(err).mean():>12.3f} {inside:>15.1%} {np.abs(exp_err).mean():>14.3f} "
           f"{exp_err.mean():>+10.2f} {len(te):>7,}")
@@ -117,7 +124,7 @@ print("Bias(exp) = actual minus expected; near 0 means the expected column is we
 bt = pd.concat(bt_rows, ignore_index=True)
 bt["pct"] = bt.groupby("pos")["expected"].rank(pct=True)
 print(f"Calibration by size of projection ({holdout} backtest; players ranked within position)")
-print(f"{'Tier':<16}{'N':>6}{'Expected':>10}{'Actual':>8}{'Bias':>8}{'  Below median':>15}{'Above ceiling':>15}")
+print(f"{'Tier':<16}{'N':>6}{'Expected':>10}{'Actual':>8}{'Bias':>8}{'Below floor':>13}{'Below median':>14}{'Above ceiling':>15}")
 for lo, hi, label in [(0, .5, "bottom half"), (.5, .8, "50th-80th pct"), (.8, .9, "80th-90th pct"),
                       (.9, .97, "90th-97th pct"), (.97, 1.01, "top 3%")]:
     g = bt[(bt["pct"] > lo) & (bt["pct"] <= hi)]
@@ -126,11 +133,10 @@ for lo, hi, label in [(0, .5, "bottom half"), (.5, .8, "50th-80th pct"), (.8, .9
     b = (g["actual"] - g["expected"])
     m = 1.96 * b.std(ddof=1) / np.sqrt(len(g))
     print(f"{label:<16}{len(g):>6,}{g['expected'].mean():>10.1f}{g['actual'].mean():>8.1f}"
-          f"{b.mean():>+8.1f}{(g['actual'] <= g['median']).mean():>14.0%}{(g['actual'] > g['ceiling']).mean():>15.0%}"
-          f"   (+/-{m:.1f})")
-print("Bias should be near 0 in every tier. 'Below median' should be about 50% and "
-      "'Above ceiling' about 10%.")
-print("A large negative Bias in the top tiers means the expected column overshoots for stars.\n")
+          f"{b.mean():>+8.1f}{(g['actual'] < g['floor']).mean():>13.0%}{(g['actual'] <= g['median']).mean():>14.0%}"
+          f"{(g['actual'] > g['ceiling']).mean():>15.0%}   (+/-{m:.1f})")
+print("Bias should be near 0 in every tier. 'Below floor' should be about 10%, 'Below median' "
+      "about 50% and 'Above ceiling' about 10%.\n")
 
 # ---------------------------------------------------------------
 # 2. Final models: train on everything finished, predict the upcoming week
@@ -142,13 +148,19 @@ for pos in POSITIONS:
     fut = up[up["position"] == pos]
     if fut.empty:
         continue
-    models = [fit_quantile_model(tr[feature_cols].fillna(0), tr["target_fp"], q) for q in QUANTILES]
-    rng = predict_range(models, fut[feature_cols].fillna(0))
+    mean_model = rc.fit_mean_model(tr[feature_cols].fillna(0), tr["target_fp"])
+    expected = np.maximum(mean_model.predict(fut[feature_cols].fillna(0)), 0)
+    if method == "residual":
+        rng = rc.residual_range(expected, pos, pool_all)
+    else:
+        models = [fit_quantile_model(tr[feature_cols].fillna(0), tr["target_fp"], q) for q in QUANTILES]
+        rng = np.clip(predict_range(models, fut[feature_cols].fillna(0)), 0, None)
+        if method == "hybrid":
+            rng = rc.hybrid_range(expected, pos, pool_all, rng)
     frame = fut[["player_id", "player_display_name", "position", "recent_team", "opponent_team",
                  "is_home", "spread_line", "total_line", "games_played_prior"]].copy()
     frame["floor"], frame["median"], frame["ceiling"] = rng[:, 0], rng[:, 1], rng[:, 2]
-    mean_model = fit_mean_model(tr[feature_cols].fillna(0), tr["target_fp"])
-    frame["expected"] = np.maximum(mean_model.predict(fut[feature_cols].fillna(0)), 0)
+    frame["expected"] = expected
     out_frames.append(frame)
 
 preds = pd.concat(out_frames, ignore_index=True)
