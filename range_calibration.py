@@ -30,7 +30,7 @@ from xgboost import XGBRegressor
 
 from new_features import extra_feature_cols
 
-RANGE_METHOD = "quantile"
+RANGE_METHOD = "residual"
 
 POSITIONS = ["QB", "RB", "WR", "TE"]
 QUANTILES = (0.1, 0.5, 0.9)        # floor, median, ceiling
