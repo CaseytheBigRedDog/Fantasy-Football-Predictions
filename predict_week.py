@@ -25,16 +25,25 @@ around the expected model, "hybrid" = residual ranges for the top projections an
 direct models for the rest). The residual and hybrid methods take a few extra
 minutes because they re-create past seasons' out-of-sample projections.
 
-What it does NOT know: injuries, inactives, depth-chart news, or weather.
-A player who got hurt last week still gets a projection based on his form.
-Check injury reports before acting on any number.
+Injuries and depth charts (from download_injuries.py):
+  * Once a team publishes an OFFICIAL designation (Out / Doubtful / Questionable, usually
+    Friday for Sunday games), the player's projection is adjusted by the historical chance
+    that players with that designation actually play. Out and Doubtful players drop to ~0.
+  * Practice-only flags (no designation yet) are shown as "Practice: DNP / limited" but do
+    NOT change any numbers, because early-week practice status is not reliable.
+  * Re-running later in the week is safe: a team whose game has already kicked off keeps
+    its earlier projections, so nothing is changed after a game starts.
+  * Late scratches, weather, and coaching decisions are still unknown.
 """
+import os
 import sys
 
 import numpy as np
 import pandas as pd
 from xgboost import XGBRegressor
 
+import availability as av
+import kickoff
 import range_calibration as rc
 
 POSITIONS = rc.POSITIONS
@@ -167,13 +176,86 @@ preds = pd.concat(out_frames, ignore_index=True)
 preds = preds.rename(columns={
     "player_display_name": "player", "recent_team": "team", "opponent_team": "opponent",
 })
-preds[["floor", "median", "ceiling", "expected"]] = preds[["floor", "median", "ceiling", "expected"]].round(1)
+
+# ---------------------------------------------------------------
+# 2b. Injuries and depth chart
+# ---------------------------------------------------------------
+preds["expected_if_active"] = preds["expected"]
+preds["p_play"] = 1.0
+preds["status"] = ""
+preds["depth"] = ""
+
+inj = av.load_injuries()
+if inj.empty or not os.path.exists("stats_clean.parquet"):
+    print("Injuries: no injury data found (run download_injuries.py), so projections ignore injuries.")
+else:
+    stats_hist = pd.read_parquet("stats_clean.parquet")[["player_id", "season", "week"]]
+    rates = av.fit_play_rates(inj, stats_hist, season, week)
+    flags = av.week_flags(inj, season, week, rates)
+    if flags.empty:
+        print(f"Injuries: no injury reports for {season} week {week} yet (they usually appear Wednesday "
+              f"to Friday), so projections ignore injuries.")
+    else:
+        f = preds[["player_id"]].merge(flags, left_on="player_id", right_on="gsis_id", how="left")
+        official = f["official"].fillna(False).to_numpy(dtype=bool)
+        preds["status"] = f["status"].fillna("").to_numpy()
+        preds["p_play"] = np.where(official, f["p_play"].fillna(1.0).to_numpy(), 1.0)
+        for i in np.where(preds["p_play"].to_numpy() < 1.0)[0]:
+            p_i = float(preds.at[i, "p_play"])
+            preds.loc[i, ["floor", "median", "ceiling"]] = rc.mixture_range(
+                preds.at[i, "expected_if_active"], preds.at[i, "position"], pool_all, p_i)
+            preds.at[i, "expected"] = p_i * preds.at[i, "expected_if_active"]
+        rep_col = f["report"].fillna("none").to_numpy()
+        n_out = int((preds["p_play"] <= 0.02).sum())
+        n_q = int((rep_col == "questionable").sum())
+        n_prov = int(((~official) & (preds["status"].to_numpy() != "")).sum())
+        lost = float((preds["expected_if_active"] - preds["expected"]).sum())
+        print(f"Injuries (reports for week {week}): {int(f['gsis_id'].notna().sum())} of {len(preds)} projected "
+              f"players are on the report.")
+        print(f"  Official designations applied: {n_out} out/doubtful, {n_q} questionable "
+              f"({lost:,.0f} projected points removed in total).")
+        print(f"  Practice-only flags shown but not applied (provisional): {n_prov}")
+        tbl = rates["rp"][(rates["rp"]["report"] == "questionable") & (rates["rp"]["n"] >= av.MIN_N)]
+        if len(tbl):
+            print("  Chance a Questionable player plays, from past seasons: "
+                  + ", ".join(f"{r.practice} practice {r.p:.0%}" for r in tbl.itertuples()))
+
+# ---------------------------------------------------------------
+# 2c. Freeze projections for games that have already kicked off
+# ---------------------------------------------------------------
+path = f"predictions_{season}_week{week}.csv"
+if os.path.exists("games_clean.parquet"):
+    frozen = kickoff.frozen_teams(pd.read_parquet("games_clean.parquet"), season, week)
+    if frozen:
+        old = pd.read_csv(path) if os.path.exists(path) else pd.DataFrame(columns=preds.columns)
+        kept = old[old["team"].isin(frozen)]
+        preds = preds[~preds["team"].isin(frozen)]
+        if len(kept):
+            preds = pd.concat([preds, kept], ignore_index=True)
+            print(f"Freeze: kept {len(kept)} earlier projections for teams whose games have already "
+                  f"kicked off ({', '.join(sorted(frozen))}); they are unchanged.")
+        else:
+            print(f"Freeze: games for {', '.join(sorted(frozen))} have already kicked off and no earlier "
+                  f"projections are on file, so those teams are left out.")
+        preds["status"] = preds["status"].fillna("")
+        preds["depth"] = preds["depth"].fillna("")
+        preds["p_play"] = preds["p_play"].fillna(1.0)
+        preds["expected_if_active"] = preds["expected_if_active"].fillna(preds["expected"])
+
+# Depth-chart labels for every row (including any kept from an earlier file)
+depth = av.load_depth_labels()
+if len(depth):
+    preds["depth"] = (preds[["player_id"]].merge(depth, left_on="player_id", right_on="gsis_id", how="left")
+                      ["depth"].fillna("").to_numpy())
+
+num = ["floor", "median", "ceiling", "expected", "expected_if_active"]
+preds[num] = preds[num].round(1)
+preds["p_play"] = preds["p_play"].round(2)
 preds = preds.sort_values("expected", ascending=False).reset_index(drop=True)
 
 # ---------------------------------------------------------------
 # 3. Save and show
 # ---------------------------------------------------------------
-path = f"predictions_{season}_week{week}.csv"
 preds.to_csv(path, index=False)
 
 missing_lines = int(preds["spread_line"].isna().sum())
@@ -194,8 +276,10 @@ for pos in POSITIONS:
     for _, r in top.iterrows():
         where = "vs" if r["is_home"] == 1 else "@"
         print(f"{r['player']:<24} {r['team']:>3} {where} {r['opponent']:<3}  "
-              f"{r['floor']:>5.1f} / {r['median']:>5.1f} / {r['ceiling']:>5.1f}   expected {r['expected']:>5.1f}")
+              f"{r['floor']:>5.1f} / {r['median']:>5.1f} / {r['ceiling']:>5.1f}   expected {r['expected']:>5.1f}"
+              + (f"   [{r['status']}]" if r["status"] else ""))
 
 print(f"\nSaved {path} ({len(preds):,} players). Columns: floor / median / ceiling / expected.")
 print("Sorted by 'expected' (the average outcome). Compare it with ESPN-style projections.")
-print("Reminder: injuries and inactives are NOT included -- check them before you decide.")
+print("Reminder: only OFFICIAL designations are applied. Late scratches and news after the last "
+      "injury update are not included.")

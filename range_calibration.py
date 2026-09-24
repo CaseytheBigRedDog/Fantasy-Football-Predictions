@@ -30,7 +30,7 @@ from xgboost import XGBRegressor
 
 from new_features import extra_feature_cols
 
-RANGE_METHOD = "residual"
+RANGE_METHOD = "quantile"
 
 POSITIONS = ["QB", "RB", "WR", "TE"]
 QUANTILES = (0.1, 0.5, 0.9)        # floor, median, ceiling
@@ -115,3 +115,31 @@ def hybrid_range(expected, pos, pool, quantile_rng):
     cutoff = pool.loc[pool["pos"] == pos, "expected"].quantile(HYBRID_CUTOFF)
     use_residual = expected >= cutoff
     return np.where(use_residual[:, None], resid_rng, quantile_rng)
+
+
+def mixture_range(expected_active, pos, pool, p_play, k=NEIGHBORS):
+    """
+    Floor / median / ceiling for a player who plays with probability p_play (and otherwise
+    scores 0). `expected_active` is his average score IF he plays. The 'if he plays' spread
+    comes from similarly projected past players, exactly as in residual_range().
+    """
+    if p_play <= 0:
+        return np.zeros(3)
+    p = pool[pool["pos"] == pos].sort_values("expected")
+    exp_sorted = p["expected"].to_numpy()
+    resid = (p["actual"] - p["expected"]).to_numpy()
+    n = len(p)
+    if n == 0:
+        raise ValueError(f"No calibration history for {pos}.")
+    k = min(k, n)
+    idx = np.searchsorted(exp_sorted, float(expected_active))
+    lo = min(max(idx - k // 2, 0), n - k)
+    sample = np.clip(float(expected_active) + resid[lo:lo + k], 0, None)
+    zero_mass = 1.0 - p_play
+    out = []
+    for q in QUANTILES:
+        if q <= zero_mass:
+            out.append(0.0)                      # the "doesn't play" outcomes fill this percentile
+        else:
+            out.append(float(np.quantile(sample, min((q - zero_mass) / p_play, 1.0))))
+    return np.array(out)

@@ -75,14 +75,42 @@ rank_col = "expected" if "expected" in pred.columns else "median"
 if rank_col == "median":
     pred["expected"] = pred["median"]
 pred["is_home"] = pred["is_home"].fillna(0)
+has_inj = "status" in pred.columns
+pred["status"] = pred["status"].fillna("").astype(str) if has_inj else ""
+pred["depth"] = pred["depth"].fillna("").astype(str) if "depth" in pred.columns else ""
+pred["p_play"] = pred["p_play"].fillna(1.0) if "p_play" in pred.columns else 1.0
 pred["pos_rank"] = pred.groupby("position")["expected"].rank(ascending=False, method="first").astype(int)
 
 records = [{
     "player": r["player"], "pos": r["position"], "team": r["team"], "opp": r["opponent"],
     "home": int(r["is_home"]), "floor": round(float(r["floor"]), 1), "median": round(float(r["median"]), 1),
     "expected": round(float(r["expected"]), 1), "ceiling": round(float(r["ceiling"]), 1),
-    "prank": int(r["pos_rank"]),
+    "prank": int(r["pos_rank"]), "status": r["status"], "depth": r["depth"], "p": round(float(r["p_play"]), 2),
 } for _, r in pred.iterrows()]
+n_out = int((pred["p_play"] <= 0.02).sum())
+n_q = int(pred["status"].str.startswith("Questionable").sum())
+n_prov = int(pred["status"].str.startswith("Practice").sum())
+if has_inj and (n_out + n_q + n_prov):
+    injury_note = (f'<p class="legend"><strong>Injury report:</strong> {n_out} player{"s" if n_out != 1 else ""} listed Out or Doubtful '
+                   f'(shown at 0.0 and sorted to the bottom; choose "all" to see them), {n_q} Questionable (projection reduced by the '
+                   f'chance they don\'t play), and {n_prov} with practice flags only (shown, but not applied, because early-week practice '
+                   f'status is unreliable).</p>')
+else:
+    injury_note = ""
+if has_inj:
+    notice_html = ('<strong>Official injury designations are included</strong> (Out, Doubtful, Questionable), but teams publish them late in '
+                   'the week, so early-week projections may not reflect them, and late scratches and breaking news are not included. '
+                   'This is a hobby project for learning; it is not betting or financial advice.')
+    how_inj = ('<li><strong>Injuries and depth charts:</strong> an official designation changes a projection by the historical chance that '
+               'players with that designation (and practice status) actually played. Depth-chart slots are shown as context only, because '
+               'the data source changed in 2025 and there is too little history to learn from.</li>')
+    limit_inj = ('<li>Injury designations arrive late in the week, and late scratches and news are unknowable in advance. '
+                 'Depth charts are context only; the model does not learn from them.</li>')
+else:
+    notice_html = ('<strong>Injuries and inactives are not included.</strong> A player who got hurt still gets a projection based on his '
+                   'recent form. This is a hobby project for learning; it is not betting or financial advice.')
+    how_inj = ""
+    limit_inj = "<li>No injury, inactive or depth-chart information (the biggest gap).</li>"
 data_json = json.dumps(records, separators=(",", ":")).replace("</", "<\\/")
 
 # ---------------------------------------------------------------
@@ -227,8 +255,8 @@ TEMPLATE = r'''<!DOCTYPE html>
 <meta property="og:description" content="Weekly fantasy football projections with honest accuracy tracking. Built with Python, pandas and XGBoost.">
 <meta property="og:type" content="website">
 <style>
-:root{--bg:#f7f8fa;--card:#fff;--text:#1a2332;--muted:#5a6678;--line:#e2e6ec;--accent:#1d5fd1;--accent2:#8792a6;--ok:#1b7f3b;--hi:#0b6bcb;--lo:#b3261e;--bar:#c9d8f5;--head:#eef1f6}
-@media (prefers-color-scheme:dark){:root{--bg:#0f141c;--card:#171e29;--text:#e7ebf2;--muted:#9aa6b8;--line:#2a3444;--accent:#6ea0ff;--accent2:#7f8ba0;--ok:#5fd17f;--hi:#7db4ff;--lo:#ff8a80;--bar:#2b4272;--head:#1d2633}}
+:root{--bg:#f7f8fa;--card:#fff;--text:#1a2332;--muted:#5a6678;--line:#e2e6ec;--accent:#1d5fd1;--accent2:#8792a6;--ok:#1b7f3b;--hi:#0b6bcb;--lo:#b3261e;--warn:#a15c00;--bar:#c9d8f5;--head:#eef1f6}
+@media (prefers-color-scheme:dark){:root{--bg:#0f141c;--card:#171e29;--text:#e7ebf2;--muted:#9aa6b8;--line:#2a3444;--accent:#6ea0ff;--accent2:#7f8ba0;--ok:#5fd17f;--hi:#7db4ff;--lo:#ff8a80;--warn:#f0b35a;--bar:#2b4272;--head:#1d2633}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 a{color:var(--accent)}
@@ -276,6 +304,9 @@ ul{padding-left:20px} li{margin:5px 0}
 footer{margin:34px 0 40px;color:var(--muted);font-size:.9rem;overflow-wrap:anywhere}
 .count{color:var(--muted);font-size:.9rem;margin-left:auto}
 .mob{display:none;font-weight:400;font-size:.78rem;color:var(--muted)}
+.dpt{color:var(--muted);font-weight:400;font-size:.78rem;margin-left:6px}
+.tag{display:block;font-weight:500;font-size:.78rem}
+.t-out{color:var(--lo)} .t-q{color:var(--warn)} .t-p{color:var(--muted)}
 @media (max-width:640px){
   th:nth-child(3),td:nth-child(3),th:nth-child(4),td:nth-child(4),th:nth-child(5),td:nth-child(5),th:nth-child(7),td:nth-child(7),th:nth-child(8),td:nth-child(8){display:none}
   .mob{display:block}
@@ -290,7 +321,7 @@ footer{margin:34px 0 40px;color:var(--muted);font-size:.9rem;overflow-wrap:anywh
 <header><div class="wrap">
 <h1>%%HEADING%%</h1>
 <p class="sub">Weekly PPR projections for QB, RB, WR and TE &middot; %%WEEKLABEL%% &middot; updated %%UPDATED%%</p>
-<p class="notice"><strong>Injuries and inactives are not included.</strong> A player who got hurt still gets a projection based on his recent form. This is a hobby project for learning; it is not betting or financial advice.</p>
+<p class="notice">%%NOTICE%%</p>
 </div></header>
 <main class="wrap">
 
@@ -317,7 +348,8 @@ footer{margin:34px 0 40px;color:var(--muted);font-size:.9rem;overflow-wrap:anywh
 <th>Range</th>
 </tr></thead>
 <tbody></tbody></table></div>
-<p class="legend">Bar = floor to ceiling &middot; tick = median (the typical game) &middot; dot = expected (the average, comparable with ESPN-style projections). Floor, median and ceiling are the 10th, 50th and 90th percentile outcomes. Rank is within position, by expected points. Click a column heading to sort. On a phone, the table shows expected points, with the matchup and floor-to-ceiling range under each name; the CSV has everything. <a href="predictions_latest.csv" download>Download the CSV</a>.</p>
+<p class="legend">Bar = floor to ceiling &middot; tick = median (the typical game) &middot; dot = expected (the average, comparable with ESPN-style projections). Floor, median and ceiling are the 10th, 50th and 90th percentile outcomes. Rank is within position, by expected points. Small grey label after a name = depth-chart slot (WR1 = first-string receiver); a colored note under a name = injury-report status. Click a column heading to sort. On a phone, the table shows expected points, with the matchup and floor-to-ceiling range under each name; the CSV has everything. <a href="predictions_latest.csv" download>Download the CSV</a>.</p>
+%%INJNOTE%%
 </div>
 </section>
 
@@ -331,6 +363,7 @@ footer{margin:34px 0 40px;color:var(--muted);font-size:.9rem;overflow-wrap:anywh
 <li><strong>Features</strong> use only what was known before kickoff, computed separately for each player: recent and recency-weighted averages of production and usage, snap share, opponent strength, Vegas spread and total, home/away and rest.</li>
 <li><strong>Models</strong> are gradient-boosted trees (XGBoost) evaluated on time-ordered splits, so a season is never predicted using its own future.</li>
 <li><strong>Ranges</strong> (floor, median, ceiling) are calibrated so that about 80% of results should land between the floor and the ceiling; the backtest checks this on seasons the model never saw.</li>
+%%HOWINJ%%
 <li><strong>Grading:</strong> every prediction is committed to GitHub before the games, then scored against actual results each week.</li>
 </ol>
 <h3>What building it taught me</h3>
@@ -343,10 +376,10 @@ footer{margin:34px 0 40px;color:var(--muted);font-size:.9rem;overflow-wrap:anywh
 </ul>
 <h3>Limitations</h3>
 <ul>
-<li>No injury, inactive or depth-chart information (the biggest gap).</li>
 <li>PPR scoring only, and one full test season so far.</li>
 <li>A player&rsquo;s team is taken from his most recent game, so off-season moves are not handled.</li>
 <li>Rookies and players with few games get rougher ranges.</li>
+%%LIMITINJ%%
 </ul>
 </div></section>
 
@@ -375,7 +408,7 @@ function render() {
   rows = rows.slice(0, state.limit);
   $("#proj tbody").innerHTML = rows.map(r => `<tr>
     <td>${esc(r.pos)}${r.prank}</td>
-    <td>${esc(r.player)}<span class="mob">${esc(r.team)} ${r.home ? "vs" : "@"} ${esc(r.opp)} &middot; range ${r.floor.toFixed(1)}&ndash;${r.ceiling.toFixed(1)}</span></td>
+    <td>${esc(r.player)}${r.depth ? `<span class="dpt" title="Depth chart slot">${esc(r.depth)}</span>` : ""}${r.status ? `<span class="tag ${/^(Out|Doubtful)/.test(r.status) ? "t-out" : /^Questionable/.test(r.status) ? "t-q" : "t-p"}">${esc(r.status)}</span>` : ""}<span class="mob">${esc(r.team)} ${r.home ? "vs" : "@"} ${esc(r.opp)} &middot; range ${r.floor.toFixed(1)}&ndash;${r.ceiling.toFixed(1)}</span></td>
     <td>${esc(r.team)} ${r.home ? "vs" : "@"} ${esc(r.opp)}</td>
     <td>${r.floor.toFixed(1)}</td><td>${r.median.toFixed(1)}</td><td><strong>${r.expected.toFixed(1)}</strong></td><td>${r.ceiling.toFixed(1)}</td>
     <td><span class="rb" role="img" aria-label="Range ${r.floor.toFixed(1)} to ${r.ceiling.toFixed(1)}, median ${r.median.toFixed(1)}, expected ${r.expected.toFixed(1)}">
@@ -410,6 +443,10 @@ render();
 
 author_html = f"<br>Built by {esc(AUTHOR)}." if AUTHOR else ""
 page = (TEMPLATE
+        .replace("%%NOTICE%%", notice_html)
+        .replace("%%INJNOTE%%", injury_note)
+        .replace("%%HOWINJ%%", how_inj)
+        .replace("%%LIMITINJ%%", limit_inj)
         .replace("%%TITLE%%", esc(SITE_TITLE))
         .replace("%%HEADING%%", esc(SITE_TITLE))
         .replace("%%WEEKLABEL%%", f"{season} Week {week}")

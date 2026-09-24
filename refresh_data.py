@@ -34,6 +34,10 @@ print(f"=== Refreshing data ({datetime.now().strftime('%Y-%m-%d %H:%M')}) ===\n"
 print("Downloading core files...")
 from download_player_stats import download_player_stats
 download_player_stats(CURRENT_YEAR)
+
+# Injury reports (2013+) and depth charts (2025+)
+from download_injuries import download_injury_data
+download_injury_data(CURRENT_YEAR)
 download(
     "https://github.com/nflverse/nflverse-data/releases/download/schedules/games.csv",
     "games.csv",

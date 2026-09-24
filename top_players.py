@@ -11,7 +11,7 @@ Usage:
 
 Columns: floor / median / ceiling / expected (the average outcome, comparable with
 ESPN-style projections). Players are ranked by expected points.
-Injuries and inactives are NOT included -- check them before you decide.
+Official injury designations are applied when the file has them; late scratches and news are not included.
 """
 import glob
 import os
@@ -57,6 +57,9 @@ for pos in ([position] if position else ["QB", "RB", "WR", "TE"]):
     for i, (_, r) in enumerate(top.iterrows(), 1):
         where = "vs" if r["is_home"] == 1 else "@"
         exp = f"   expected {r['expected']:>5.1f}" if "expected" in df.columns else ""
-        print(f"{i:>2}. {r['player']:<24} {r['team']:>3} {where} {r['opponent']:<3} "
-              f"{r['floor']:>5.1f} / {r['median']:>5.1f} / {r['ceiling']:>5.1f}{exp}")
+        status = r["status"] if "status" in df.columns and isinstance(r["status"], str) else ""
+        depth = r["depth"] if "depth" in df.columns and isinstance(r["depth"], str) else ""
+        print(f"{i:>2}. {r['player']:<24} {depth:<4} {r['team']:>3} {where} {r['opponent']:<3} "
+              f"{r['floor']:>5.1f} / {r['median']:>5.1f} / {r['ceiling']:>5.1f}{exp}"
+              + (f"   [{status}]" if status else ""))
     print()

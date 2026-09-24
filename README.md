@@ -38,7 +38,7 @@ Position-specific models (overall average error 4.624, about 11% better than the
 | WR | 0.568 | 0.598 |
 | TE | 0.553 | 0.568 |
 
-**In short:** a typical prediction misses by about 4.6 points per player-week, and the ranges are reasonably well calibrated. The model does **not** beat FantasyPros, which is ahead at every position, though the gap has narrowed as the model improved. One reason: FantasyPros rankings are scraped on Fridays and reflect injury news, while this model has no injury information at all.
+**In short:** a typical prediction misses by about 4.6 points per player-week, and the ranges are reasonably well calibrated. The model does **not** beat FantasyPros, which is ahead at every position, though the gap has narrowed as the model improved. One reason: FantasyPros rankings are scraped on Fridays and reflect injury news, while the models behind these backtest numbers have no injury information.
 
 **The expected column is well calibrated across projection sizes.** In the 2025 backtest, actual results landed within about a point of the expected value (at most 1.2 points off) in every tier from the bottom half of projections up to the top 3% (top 3%: 19.3 expected vs 19.5 actual).
 
@@ -53,7 +53,8 @@ Position-specific models (overall average error 4.624, about 11% better than the
    - Vegas spread and total (and the team's implied score), home/away and rest days
 3. **Models** are evaluated with time-ordered splits (never training on the future). An XGBoost model predicts the expected (average) score; per-position models produce the floor / median / ceiling.
 4. **Ranges** are built around the expected model (the `residual` method, the default): for a player projected at, say, 19 points, look at how far real results landed from the projection for other players projected near 19 in past seasons (using only projections made without seeing the result), and apply that spread. Two alternatives can be selected with `RANGE_METHOD` in `range_calibration.py`: `quantile` (separate models trained directly for each percentile) and `hybrid` (`quantile` for most players, `residual` for the top ~3%). In a 2023-2025 backtest (15,495 player-weeks) the residual method was at least as well calibrated as direct percentile models in every projection tier and slightly better overall (average error of the median 4.597 vs 4.608). It matters most for the top 3% of projections, where only 9% of players beat their ceiling (target 10%), versus 15% with direct percentile models.
-5. **Prediction** builds a row for each likely player on a team with an unplayed game, using exactly the same feature code as the training rows.
+5. **Injuries and depth charts** (from nflverse) are applied at prediction time. An official game-day designation (Out, Doubtful, Questionable) changes a projection by the historical chance that players with that designation and practice status actually recorded stats: Out and Doubtful players drop to about zero, and a Questionable player's expected points, floor and median shrink by his chance of playing. Practice-only flags, which appear before designations are published, are shown but do not change any numbers, because the history only stores each week's final report. Depth-chart slots (WR1, RB2, ...) are shown as context; the data source changed after 2024, so there is too little history for the model to learn from.
+6. **Prediction** builds a row for each likely player on a team with an unplayed game, using exactly the same feature code as the training rows.
 
 ## Weekly routine
 
@@ -65,6 +66,16 @@ python score_predictions.py   # grade last week's predictions
 python predict_week.py        # project the coming week (takes a few extra minutes; it rebuilds past seasons' projections)
 python build_site.py          # rebuild the public website, then commit and push
 ```
+
+**Friday** (after teams publish their final injury reports), refresh the projections without retraining everything:
+
+```
+python download_injuries.py   # newest injury reports and depth charts
+python predict_week.py        # updates this week's projections
+python build_site.py          # then commit and push
+```
+
+Re-running is safe: a team whose game has already kicked off keeps its earlier projections, so nothing is changed after a game starts.
 
 Outputs: `predictions_<season>_week<N>.csv` (floor / median / ceiling / expected per player), `scored_<season>_week<N>.csv` (predictions next to actual results) and `accuracy_log.csv` (one row per week and position, including the comparison with FantasyPros when the archive has that week). Committing predictions before the games are played makes the history in this repository a real track record; live tracking starts with Week 3 of the 2026 season.
 
@@ -105,6 +116,10 @@ Needs Python with pandas, numpy, scikit-learn, xgboost (2.0 or newer, for quanti
 | `build_site.py` | Builds the public website (`docs/index.html`) from the latest predictions and results |
 | `top_players.py` | Prints the top N players at each position from the latest predictions |
 | `range_calibration.py` | Shared code for the expected model and the range methods |
+| `availability.py` | Turns injury reports and depth charts into play probabilities, status labels and depth slots |
+| `kickoff.py` | Works out which teams' games have kicked off, so their projections stay frozen |
+| `download_injuries.py` | Downloads weekly injury reports (2013+) and depth charts (2025+) |
+| `injury_utils.py` | Shared helpers for reading injury report wording |
 | `new_features.py` | Switch for the recency-weighted and current-season features (currently on) |
 
 **Analysis and diagnostics** (read-only; they explain the model, they don't change it)
@@ -115,6 +130,7 @@ Needs Python with pandas, numpy, scikit-learn, xgboost (2.0 or newer, for quanti
 | `check_breakouts.py`, `check_role_breakouts.py` | How does the model treat hot streaks and role changes? |
 | `find_comps.py` | For any player, shows what similar past players scored next |
 | `check_fp_alignment.py` | Verifies FantasyPros rankings are matched to the right week |
+| `inspect_injuries.py` | Shows how predictive each injury designation has been and which of your projections carry a flag |
 | `compare_features.py` | Tests the new features against the old ones |
 | `compare_range_methods.py` | Compares the `residual`, `hybrid` and `quantile` range methods over several seasons (`python compare_range_methods.py 2023 2024 2025`) |
 
@@ -122,7 +138,7 @@ Needs Python with pandas, numpy, scikit-learn, xgboost (2.0 or newer, for quanti
 
 | File | Purpose |
 |---|---|
-| `update_split.py`, `apply_fp_fix.py`, `adopt_new_features.py` | Already applied |
+| `update_split.py`, `apply_fp_fix.py`, `adopt_new_features.py`, `apply_injury_download.py` | Already applied |
 | `adopt_residual_ranges.py` | Switches the range method (`residual` is in use; `hybrid` or `quantile` are available, e.g. `python adopt_residual_ranges.py quantile` to undo) |
 
 ## What the diagnostics showed
@@ -135,7 +151,7 @@ Needs Python with pandas, numpy, scikit-learn, xgboost (2.0 or newer, for quanti
 
 ## Known limitations
 
-- **No injury, inactive or depth-chart information.** A player who got hurt still gets a projection based on his recent form. Check injury reports before acting on any number.
+- **Injury information arrives late and is incomplete.** Official designations are applied once teams publish them (usually Friday), so Tuesday projections do not reflect them, and late scratches and breaking news are never included. The backtest results above were measured without injury data, so they do not show what the injury adjustment adds. The model does not yet learn from injuries (for example, when a team's top receiver is out, his teammates get more targets); that is the next thing to test.
 - **Ranges for the very top projections rest on the thinnest history** (about 470 player-weeks in the 2023-2025 backtest), so they are the least certain even though they were well calibrated in the backtest.
 - **Off-season team changes are not handled** for upcoming-week rows; a player's team is taken from his most recent game.
 - **Playoff games are not included** in a player's history.
