@@ -61,6 +61,22 @@ footer{margin:34px 0 40px;color:var(--muted);font-size:.9rem;overflow-wrap:anywh
 .dpt{color:var(--muted);font-weight:400;font-size:.78rem;margin-left:6px}
 .tag{display:block;font-weight:500;font-size:.78rem}
 .t-out{color:var(--lo)} .t-q{color:var(--warn)} .t-p{color:var(--muted)}
+/* NEW: left-hand section navigation */
+html{scroll-behavior:smooth}
+section{scroll-margin-top:64px}
+.wide{max-width:1240px}
+.layout{display:flex;gap:28px;align-items:flex-start}
+.sidenav{position:sticky;top:18px;flex:0 0 176px;display:flex;flex-direction:column;gap:2px}
+.sidenav a{display:block;padding:8px 12px;border-radius:8px;color:var(--muted);text-decoration:none;font-size:.92rem;border-left:3px solid transparent;white-space:nowrap}
+.sidenav a:hover{background:var(--head);color:var(--text)}
+.sidenav a.active{background:var(--head);color:var(--accent);border-left-color:var(--accent);font-weight:600}
+.content{flex:1;min-width:0}
+@media (max-width:900px){
+  .layout{display:block}
+  .sidenav{position:sticky;top:0;z-index:10;flex-direction:row;overflow-x:auto;gap:4px;background:var(--bg);border-bottom:1px solid var(--line);margin:0 -18px 14px;padding:10px 18px}
+  .sidenav a{border-left:none;border-bottom:3px solid transparent;border-radius:8px 8px 0 0;padding:6px 10px}
+  .sidenav a.active{border-left-color:transparent;border-bottom-color:var(--accent)}
+}
 /* NEW: My Fantasy Team tab — search dropdown and remove button */
 #teamsearch{position:relative}
 .sugg{position:absolute;z-index:5;left:0;right:0;background:var(--card);border:1px solid var(--line);border-radius:8px;margin-top:4px;max-height:260px;overflow-y:auto;box-shadow:0 6px 18px rgba(0,0,0,.15)}
@@ -86,7 +102,18 @@ footer{margin:34px 0 40px;color:var(--muted);font-size:.9rem;overflow-wrap:anywh
 <p class="sub">Weekly PPR projections for QB, RB, WR and TE &middot; 2026 Week 3 &middot; updated Sep 24, 2026</p>
 <p class="notice"><strong>Official injury designations are included</strong> (Out, Doubtful, Questionable), but teams publish them late in the week, so early-week projections may not reflect them, and late scratches and breaking news are not included. This is a hobby project for learning; it is not betting or financial advice.</p>
 </div></header>
-<main class="wrap">
+<main class="wrap wide">
+<div class="layout">
+<!-- NEW: left-hand section navigation -->
+<nav class="sidenav" aria-label="Page sections">
+<a href="#projections">Projections</a>
+<a href="#myteam">My Team</a>
+<a href="#track">Track record</a>
+<a href="#last">Last week</a>
+<a href="#backtest">Accuracy</a>
+<a href="#how">How it works</a>
+</nav>
+<div class="content">
 
 <section id="projections">
 <h2>2026 Week 3 projections</h2>
@@ -164,6 +191,8 @@ footer{margin:34px 0 40px;color:var(--muted);font-size:.9rem;overflow-wrap:anywh
 </ul>
 </div></section>
 
+</div>
+</div>
 </main>
 <footer><div class="wrap">
 Code and full write-up: <a href="https://github.com/CaseytheBigRedDog/Fantasy-Football-Predictions">https://github.com/CaseytheBigRedDog/Fantasy-Football-Predictions</a>. Data: nflverse (weekly stats, schedules, snap counts); expert-consensus benchmark: FantasyPros.
@@ -275,6 +304,32 @@ render();
   });
 
   renderTeam();
+})();
+
+/* NEW: left-hand nav — smooth scroll on click, highlight the section in view */
+(function () {
+  const links = Array.from(document.querySelectorAll(".sidenav a"));
+  const sections = links.map(a => document.querySelector(a.getAttribute("href"))).filter(Boolean);
+  if (!sections.length) return;
+
+  function setActive(id) {
+    links.forEach(a => a.classList.toggle("active", a.getAttribute("href") === "#" + id));
+  }
+
+  links.forEach(a => a.addEventListener("click", e => {
+    e.preventDefault();
+    const id = a.getAttribute("href").slice(1);
+    document.getElementById(id).scrollIntoView({ behavior: "smooth", block: "start" });
+    setActive(id);
+    history.replaceState(null, "", "#" + id);
+  }));
+
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => { if (e.isIntersecting) setActive(e.target.id); });
+  }, { rootMargin: "-15% 0px -70% 0px", threshold: 0 });
+  sections.forEach(s => io.observe(s));
+
+  setActive((location.hash || "#" + sections[0].id).slice(1));
 })();
 </script>
 </body>
