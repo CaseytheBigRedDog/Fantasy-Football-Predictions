@@ -5,3 +5,4 @@ fp_ecr_all.parquet
 !predictions_*.csv
 !scored_*.csv
 !accuracy_log.csv
+fp_weekly_rankings.parquet

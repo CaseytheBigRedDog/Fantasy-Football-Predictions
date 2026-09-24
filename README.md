@@ -63,9 +63,14 @@ Run on Tuesday, after Monday night's game is final:
 python refresh_data.py        # download new data, rebuild features, retrain, re-evaluate
 python score_predictions.py   # grade last week's predictions
 python predict_week.py        # project the coming week (takes a few extra minutes; it rebuilds past seasons' projections)
+python build_site.py          # rebuild the public website, then commit and push
 ```
 
 Outputs: `predictions_<season>_week<N>.csv` (floor / median / ceiling / expected per player), `scored_<season>_week<N>.csv` (predictions next to actual results) and `accuracy_log.csv` (one row per week and position, including the comparison with FantasyPros when the archive has that week). Committing predictions before the games are played makes the history in this repository a real track record; live tracking starts with Week 3 of the 2026 season.
+
+## Website
+
+The projections, the graded track record and the backtest results are published as a static site with GitHub Pages, served from the `docs` folder. `build_site.py` creates it from the latest predictions, scored results and accuracy log; pushing the updated `docs` folder republishes it. The page is a single self-contained HTML file with no external services or trackers. Live site: https://caseythebigreddog.github.io/Fantasy-Football-Predictions/
 
 `run_refresh.bat` and `SCHEDULING.md` explain how to schedule the refresh with Windows Task Scheduler.
 
@@ -97,6 +102,8 @@ Needs Python with pandas, numpy, scikit-learn, xgboost (2.0 or newer, for quanti
 |---|---|
 | `predict_week.py` | Projects the next unplayed week; prints a backtest and a calibration table |
 | `score_predictions.py` | Grades a week's predictions and updates the accuracy log |
+| `build_site.py` | Builds the public website (`docs/index.html`) from the latest predictions and results |
+| `top_players.py` | Prints the top N players at each position from the latest predictions |
 | `range_calibration.py` | Shared code for the expected model and the range methods |
 | `new_features.py` | Switch for the recency-weighted and current-season features (currently on) |
 
