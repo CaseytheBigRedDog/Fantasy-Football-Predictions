@@ -53,13 +53,15 @@ def describe(row):
 def injury_note(row):
     p_play = row.get("p_play")
     status = row.get("status") or ""
-    if status or (p_play is not None and p_play < 0.99):
+    if p_play is not None and p_play < 0.99:
         label = status if status else "uncertain"
         return (
             f"{row['player']} is listed {label} (about {p_play:.0%} chance to play), "
             f"so the expected number is already shrunk; if he plays it is "
             f"{row['expected_if_active']:.1f}."
         )
+    if status:  # practice-only flag: shown, but it does not change the numbers
+        return f"{row['player']} has a practice flag ({status}); it is shown but does not change the projection."
     return None
 
 
@@ -128,6 +130,9 @@ def answer_rules(question):
 
     if len(rows) >= 2:
         text, ranked = compare(rows)
+        for last, options in ambiguous.items():  # a name we could not pin down: say so, don't drop it silently
+            names = ", ".join(f"{o['player']} ({o['position']}, {o['team']})" for o in options)
+            text += f"\nNote: '{last}' matches more than one player ({names}), so I left it out. Use the full name to include one."
         return text, ranked
 
     if len(rows) == 1:
