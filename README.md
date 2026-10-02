@@ -166,3 +166,7 @@ nflverse froze its combined `player_stats` file after the 2024 season and now pu
 ## Disclaimer
 
 For learning and entertainment. Not betting or financial advice.
+
+## Interactive Dashboard
+
+[View the Tableau Public dashboard](https://public.tableau.com/views/FantasyFootballModelvsBaselinevsExperts/Dashboard1?:language=en-US&publish=yes&:sid=&:redirect=auth&:display_count=n&:origin=viz_share_link) comparing model error against a naive baseline and FantasyPros expert consensus, by position and week. The 2025 season is a true out-of-sample test (model trained on 2013-2024).
