@@ -39,7 +39,7 @@ download_player_stats(CURRENT_YEAR)
 from download_injuries import download_injury_data
 download_injury_data(CURRENT_YEAR)
 download(
-    "https://github.com/nflverse/nflverse-data/releases/download/schedules/games.csv",
+    "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv",
     "games.csv",
 )
 download(
@@ -100,6 +100,12 @@ except Exception as e:
 # ---------------------------------------------------------------
 # 4. Re-run the full modeling pipeline with fresh data
 # ---------------------------------------------------------------
+print("\nUpdating red zone data...")
+result = subprocess.run([sys.executable, "build_redzone.py"])
+if result.returncode != 0:
+    print("!!! build_redzone.py failed -- stopping.")
+    sys.exit(1)
+
 print("\n=== Re-running pipeline ===\n")
 for script in [
     "01_load_data.py", "02_features.py", "03_train_model.py",
@@ -112,3 +118,4 @@ for script in [
         sys.exit(1)
 
 print("\n=== Refresh complete ===")
+

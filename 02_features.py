@@ -255,6 +255,29 @@ snap_match_rate = stats.loc[~stats["is_upcoming"], "offense_pct"].notna().mean()
 print(f"Snap count match rate: {snap_match_rate:.1%}")
 
 # ---------------------------------------------------------------
+# 3c. Red zone usage (targets / carries inside the opponent 20)
+# ---------------------------------------------------------------
+rz = pd.read_csv("redzone_data/redzone_weekly.csv")
+stats = stats.merge(rz, on=["player_id", "season", "week"], how="left")
+rz_raw = ["rz_targets", "rz_carries", "rz_touches"]
+stats[rz_raw] = stats[rz_raw].fillna(0)
+
+stats = stats.sort_values(["player_id", "season", "week"]).reset_index(drop=True)
+grp3 = stats.groupby("player_id")
+pid3 = stats["player_id"]
+for col in rz_raw:
+    shifted = grp3[col].shift(1)
+    for window in [3, 5]:
+        stats[f"{col}_r{window}"] = (
+            shifted.groupby(pid3).rolling(window, min_periods=1).mean()
+            .reset_index(level=0, drop=True)
+        )
+    stats[f"{col}_ewm"] = (
+        shifted.groupby(pid3).ewm(halflife=2, min_periods=1, ignore_na=True).mean()
+        .reset_index(level=0, drop=True)
+    )
+
+# ---------------------------------------------------------------
 # 4. Target: raw fantasy points (standard scoring uses 'fantasy_points';
 #    PPR uses 'fantasy_points_ppr'. We'll predict PPR since it's the most
 #    common league format -- swap the column if the user plays standard.)

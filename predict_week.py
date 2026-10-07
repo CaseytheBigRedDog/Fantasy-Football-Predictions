@@ -200,6 +200,7 @@ else:
         official = f["official"].fillna(False).to_numpy(dtype=bool)
         preds["status"] = f["status"].fillna("").to_numpy()
         preds["p_play"] = np.where(official, f["p_play"].fillna(1.0).to_numpy(), 1.0)
+        preds[["floor", "median", "ceiling"]] = preds[["floor", "median", "ceiling"]].astype("float64")
         for i in np.where(preds["p_play"].to_numpy() < 1.0)[0]:
             p_i = float(preds.at[i, "p_play"])
             preds.loc[i, ["floor", "median", "ceiling"]] = rc.mixture_range(
@@ -283,3 +284,4 @@ print(f"\nSaved {path} ({len(preds):,} players). Columns: floor / median / ceili
 print("Sorted by 'expected' (the average outcome). Compare it with ESPN-style projections.")
 print("Reminder: only OFFICIAL designations are applied. Late scratches and news after the last "
       "injury update are not included.")
+
