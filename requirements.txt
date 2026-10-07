@@ -3,3 +3,4 @@ pyarrow
 scikit-learn
 xgboost>=2.0
 scipy
+nflreadpy
