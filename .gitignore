@@ -6,3 +6,5 @@ fp_ecr_all.parquet
 !scored_*.csv
 !accuracy_log.csv
 fp_weekly_rankings.parquet
+fantasy.db
+data/

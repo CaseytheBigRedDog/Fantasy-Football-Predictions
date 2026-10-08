@@ -170,3 +170,15 @@ For learning and entertainment. Not betting or financial advice.
 ## Interactive Dashboard
 
 [View the Tableau Public dashboard](https://public.tableau.com/views/FantasyFootballModelvsBaselinevsExperts/Dashboard1?:language=en-US&publish=yes&:sid=&:redirect=auth&:display_count=n&:origin=viz_share_link) comparing model error against a naive baseline and FantasyPros expert consensus, by position and week. The 2025 season is a true out-of-sample test (model trained on 2013-2024).
+
+## SQL Analysis
+
+I also used SQL (SQLite) to engineer features, evaluate the model, and run data-quality checks on the live 2026 predictions (Weeks 3-4, players who played). The queries are in the [`sql/`](sql/) folder, and the findings and limitations are written up in [SQL_ANALYSIS.md](SQL_ANALYSIS.md).
+
+Highlights:
+
+- **The model beat the 3-game-average baseline at every position** on RMSE in the pooled 2026 Weeks 3-4 sample.
+- **The edge is concentrated among starters** (about 12% lower error than the baseline), and fades for deep backups.
+- **Limitation found with SQL:** the model's `p_play` is 1.0 for nearly every player, so it predicts points for players who play but does not yet predict who plays. Building a real play probability is a next step.
+
+To reproduce: run `python load_to_sql.py` to build a local `fantasy.db` from the CSV files in a `data/` folder, then `python run_query.py sql/<file>.sql`.
